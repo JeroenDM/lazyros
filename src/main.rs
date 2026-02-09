@@ -13,6 +13,8 @@
 //! [examples]: https://github.com/ratatui/ratatui/blob/main/examples
 //! [examples readme]: https://github.com/ratatui/ratatui/blob/main/examples/README.md
 
+use std::{sync::mpsc, thread};
+
 use color_eyre::Result;
 use ratatui::{
     DefaultTerminal,
@@ -136,13 +138,34 @@ impl TodoItem {
     }
 }
 
+enum LREvent {
+    Input(crossterm::event::KeyEvent),
+}
+
+fn run_input_loop(tx: mpsc::Sender<LREvent>) {
+    loop {
+        if let Event::Key(key) = event::read().unwrap() {
+            tx.send(LREvent::Input(key)).unwrap();
+        };
+    }
+}
+
 impl App {
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            run_input_loop(tx);
+        });
+
         while !self.should_exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-            if let Event::Key(key) = event::read()? {
-                self.handle_key(key);
-            };
+            match rx.recv().unwrap() {
+                LREvent::Input(key_event) => {
+                    self.handle_key(key_event);
+                    terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+                }
+            }
         }
         Ok(())
     }
