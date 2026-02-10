@@ -1,18 +1,3 @@
-//! # [Ratatui] List example
-//!
-//! The latest version of this example is available in the [examples] folder in the repository.
-//!
-//! Please note that the examples are designed to be run against the `main` branch of the Github
-//! repository. This means that you may not be able to compile with the latest release version on
-//! crates.io, or the one that you have installed locally.
-//!
-//! See the [examples readme] for more information on finding examples that match the version of the
-//! library you are using.
-//!
-//! [Ratatui]: https://github.com/ratatui/ratatui
-//! [examples]: https://github.com/ratatui/ratatui/blob/main/examples
-//! [examples readme]: https://github.com/ratatui/ratatui/blob/main/examples/README.md
-
 use std::{sync::mpsc, thread};
 
 use color_eyre::Result;
@@ -48,18 +33,80 @@ fn main() -> Result<()> {
     app_result
 }
 
-/// This struct holds the current state of the app. In particular, it has the `todo_list` field
-/// which is a wrapper around `ListState`. Keeping track of the state lets us render the
-/// associated widget with its state and have access to features such as natural scrolling.
-///
-/// Check the event handling at the bottom to see how to change the state on incoming events. Check
-/// the drawing logic for items on how to specify the highlighting style for selected items.
-struct App {
-    should_exit: bool,
-    todo_list: TodoList,
+///////////////////////////////////////////////////////////////////////////////
+/// Event handling
+///////////////////////////////////////////////////////////////////////////////
+
+enum LREvent {
+    // Input events
+    Quit,
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter, // Select, activate, confirm, ...
+    Home,  // Go to first item or start of line.
+    End,   // Go to last item or end of line.
+
+    // ROS2 events
+    TopicList(Vec<String>),
 }
 
-struct TodoList {
+fn run_input_loop(tx: mpsc::Sender<LREvent>) -> Result<()> {
+    loop {
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            let event = match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => LREvent::Quit,
+                KeyCode::Char('h') | KeyCode::Left => LREvent::Left,
+                KeyCode::Char('j') | KeyCode::Down => LREvent::Down,
+                KeyCode::Char('k') | KeyCode::Up => LREvent::Up,
+                KeyCode::Char('g') | KeyCode::Home => LREvent::Home,
+                KeyCode::Char('G') | KeyCode::End => LREvent::End,
+                KeyCode::Char('l') | KeyCode::Right  => LREvent::Right,
+                KeyCode::Enter => LREvent::Enter,
+                _ => continue,
+            };
+            tx.send(event)?;
+        };
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// ROS2 Command handling
+///////////////////////////////////////////////////////////////////////////////
+
+enum ROS2Command {
+    TopicList,
+}
+
+fn run_cmd_loop(rx: mpsc::Receiver<ROS2Command>, tx: mpsc::Sender<LREvent>) -> Result<()> {
+    loop {
+        // Here you would run your ROS2 command and parse the output.
+        // TODO now just sleep for a bit.
+        let _cmd = rx.recv()?;
+        // std::thread::sleep(std::time::Duration::from_secs(5));
+        // let dummy_topics = vec![
+        //     "topic1".to_string(),
+        //     "topic2".to_string(),
+        //     "topic3".to_string(),
+        // ];
+        let dummy_topics = (1..=100).map(|i| format!("topic{}", i)).collect();
+        tx.send(LREvent::TopicList(dummy_topics))?;
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// app state
+///////////////////////////////////////////////////////////////////////////////
+struct App {
+    should_exit: bool,
+    topics: TopicList,
+}
+
+struct TopicList {
     items: Vec<TodoItem>,
     state: ListState,
 }
@@ -81,43 +128,44 @@ impl Default for App {
     fn default() -> Self {
         Self {
             should_exit: false,
-            todo_list: TodoList::from_iter([
-                (
-                    Status::Todo,
-                    "Rewrite everything with Rust!",
-                    "I can't hold my inner voice. He tells me to rewrite the complete universe with Rust",
-                ),
-                (
-                    Status::Completed,
-                    "Rewrite all of your tui apps with Ratatui",
-                    "Yes, you heard that right. Go and replace your tui with Ratatui.",
-                ),
-                (
-                    Status::Todo,
-                    "Pet your cat",
-                    "Minnak loves to be pet by you! Don't forget to pet and give some treats!",
-                ),
-                (
-                    Status::Todo,
-                    "Walk with your dog",
-                    "Max is bored, go walk with him!",
-                ),
-                (
-                    Status::Completed,
-                    "Pay the bills",
-                    "Pay the train subscription!!!",
-                ),
-                (
-                    Status::Completed,
-                    "Refactor list example",
-                    "If you see this info that means I completed this task!",
-                ),
-            ]),
+            topics: TopicList::from_iter([]),
+            // topics: TopicList::from_iter([
+            //     (
+            //         Status::Todo,
+            //         "Rewrite everything with Rust!",
+            //         "I can't hold my inner voice. He tells me to rewrite the complete universe with Rust",
+            //     ),
+            //     (
+            //         Status::Completed,
+            //         "Rewrite all of your tui apps with Ratatui",
+            //         "Yes, you heard that right. Go and replace your tui with Ratatui.",
+            //     ),
+            //     (
+            //         Status::Todo,
+            //         "Pet your cat",
+            //         "Minnak loves to be pet by you! Don't forget to pet and give some treats!",
+            //     ),
+            //     (
+            //         Status::Todo,
+            //         "Walk with your dog",
+            //         "Max is bored, go walk with him!",
+            //     ),
+            //     (
+            //         Status::Completed,
+            //         "Pay the bills",
+            //         "Pay the train subscription!!!",
+            //     ),
+            //     (
+            //         Status::Completed,
+            //         "Refactor list example",
+            //         "If you see this info that means I completed this task!",
+            //     ),
+            // ]),
         }
     }
 }
 
-impl FromIterator<(Status, &'static str, &'static str)> for TodoList {
+impl FromIterator<(Status, &'static str, &'static str)> for TopicList {
     fn from_iter<I: IntoIterator<Item = (Status, &'static str, &'static str)>>(iter: I) -> Self {
         let items = iter
             .into_iter()
@@ -138,79 +186,70 @@ impl TodoItem {
     }
 }
 
-enum LREvent {
-    Input(crossterm::event::KeyEvent),
-}
+///////////////////////////////////////////////////////////////////////////////
+/// UPDATE
+///////////////////////////////////////////////////////////////////////////////
 
-fn run_input_loop(tx: mpsc::Sender<LREvent>) {
-    loop {
-        if let Event::Key(key) = event::read().unwrap() {
-            tx.send(LREvent::Input(key)).unwrap();
-        };
+fn update(app: &mut App, event: LREvent, tx: &mpsc::Sender<ROS2Command>) -> Option<ROS2Command> {
+    match event {
+        LREvent::Quit => app.should_exit = true,
+        LREvent::Left => app.topics.state.select(None),
+        LREvent::Down => app.topics.state.select_next(),
+        LREvent::Up => app.topics.state.select_previous(),
+        LREvent::Home => app.topics.state.select_first(),
+        LREvent::End => app.topics.state.select_last(),
+        LREvent::Right => app.toggle_status(),
+        LREvent::Enter => tx.send(ROS2Command::TopicList).unwrap(), 
+        LREvent::TopicList(topics) => {
+            let items = topics
+                .into_iter()
+                .map(|topic| {
+                    TodoItem {
+                        status: Status::Todo,
+                        todo: topic.clone(),
+                        info: format!("Info for topic {}", topic),
+                    }
+                }).collect();
+            let state = ListState::default();
+            app.topics = TopicList { items, state };
+        }
     }
+    Some(ROS2Command::TopicList)
 }
 
 impl App {
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        // 2 background threads to handle user input and ros2 commands.
         let (tx, rx) = mpsc::channel();
-
-        thread::spawn(move || {
-            run_input_loop(tx);
+        let tx_user_input = tx.clone();
+        thread::spawn(move || -> Result<()> {
+            run_input_loop(tx_user_input)?;
+            Ok(())
         });
 
+        // Feedback channel for ros2 commands.
+        let (tx_ros2_cmd, rx_ros2_cmd) = mpsc::channel();
+        thread::spawn(move || -> Result<()> {
+            run_cmd_loop(rx_ros2_cmd, tx)?;
+            Ok(())
+        });
+
+        // Draw initial screen because loop below waits for the first input.
+        terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+
+        // Kick off main event loop.
         while !self.should_exit {
+            let event = rx.recv().unwrap();
+            update(&mut self, event, &tx_ros2_cmd);
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-            match rx.recv().unwrap() {
-                LREvent::Input(key_event) => {
-                    self.handle_key(key_event);
-                    terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-                }
-            }
         }
         Ok(())
     }
 
-    fn handle_key(&mut self, key: KeyEvent) {
-        if key.kind != KeyEventKind::Press {
-            return;
-        }
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
-            KeyCode::Char('h') | KeyCode::Left => self.select_none(),
-            KeyCode::Char('j') | KeyCode::Down => self.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.select_previous(),
-            KeyCode::Char('g') | KeyCode::Home => self.select_first(),
-            KeyCode::Char('G') | KeyCode::End => self.select_last(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                self.toggle_status();
-            }
-            _ => {}
-        }
-    }
-
-    fn select_none(&mut self) {
-        self.todo_list.state.select(None);
-    }
-
-    fn select_next(&mut self) {
-        self.todo_list.state.select_next();
-    }
-    fn select_previous(&mut self) {
-        self.todo_list.state.select_previous();
-    }
-
-    fn select_first(&mut self) {
-        self.todo_list.state.select_first();
-    }
-
-    fn select_last(&mut self) {
-        self.todo_list.state.select_last();
-    }
-
     /// Changes the status of the selected list item
     fn toggle_status(&mut self) {
-        if let Some(i) = self.todo_list.state.selected() {
-            self.todo_list.items[i].status = match self.todo_list.items[i].status {
+        if let Some(i) = self.topics.state.selected() {
+            self.topics.items[i].status = match self.topics.items[i].status {
                 Status::Completed => Status::Todo,
                 Status::Todo => Status::Completed,
             }
@@ -218,6 +257,9 @@ impl App {
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+/// RENDER
+///////////////////////////////////////////////////////////////////////////////
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let [header_area, main_area, footer_area] = Layout::vertical([
@@ -228,7 +270,7 @@ impl Widget for &mut App {
         .areas(area);
 
         let [list_area, item_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(main_area);
+            Layout::horizontal([Constraint::Fill(1), Constraint::Fill(3)]).areas(main_area);
 
         App::render_header(header_area, buf);
         App::render_footer(footer_area, buf);
@@ -262,7 +304,7 @@ impl App {
 
         // Iterate through all elements in the `items` and stylize them.
         let items: Vec<ListItem> = self
-            .todo_list
+            .topics
             .items
             .iter()
             .enumerate()
@@ -281,15 +323,15 @@ impl App {
 
         // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
         // same method name `render`.
-        StatefulWidget::render(list, area, buf, &mut self.todo_list.state);
+        StatefulWidget::render(list, area, buf, &mut self.topics.state);
     }
 
     fn render_selected_item(&self, area: Rect, buf: &mut Buffer) {
         // We get the info depending on the item's state.
-        let info = if let Some(i) = self.todo_list.state.selected() {
-            match self.todo_list.items[i].status {
-                Status::Completed => format!("✓ DONE: {}", self.todo_list.items[i].info),
-                Status::Todo => format!("☐ TODO: {}", self.todo_list.items[i].info),
+        let info = if let Some(i) = self.topics.state.selected() {
+            match self.topics.items[i].status {
+                Status::Completed => format!("✓ DONE: {}", self.topics.items[i].info),
+                Status::Todo => format!("☐ TODO: {}", self.topics.items[i].info),
             }
         } else {
             "Nothing selected...".to_string()
